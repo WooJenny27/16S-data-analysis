@@ -1,0 +1,94 @@
+conda activate qiime2-2020.8
+
+#导入数据（单端数据），要自己弄个manifest
+qiime tools import \
+  --type 'SampleData[SequencesWithQuality]' \
+  --input-path test_manifest_KM_DNA \
+  --output-path /srv/raw_data/KM_biopsyDNA/output/single-end-demux.qza \
+  --input-format SingleEndFastqManifestPhred33V2
+
+#创建可视化文件查看质量
+time qiime demux summarize \
+  --i-data single-end-demux.qza\
+  --o-visualization demux.qzv\
+
+不进行修剪  “denoise-single”或者“denoise-paired”
+time qiime dada2 denoise-single \
+--i-demultiplexed-seqs  single-end-demux.qza \
+--p-trunc-len 0 \
+--o-table table.qza \
+--o-representative-sequences rep-seqs.qza \
+--o-denoising-stats denoising-stats.qza
+
+查看去噪过程统计
+qiime metadata tabulate \
+  --m-input-file denoising-stats.qza \
+  --o-visualization stats-dada2.qzv
+
+特征表数据需要进行特征表统计，查看基本情况
+qiime feature-table summarize \
+  --i-table table.qza \
+  --o-visualization table.qzv \
+  --m-sample-metadata-file sample-metadata.tsv
+
+代表序列统计，可以看到各个序列，可以点进去blast
+qiime feature-table tabulate-seqs \
+  --i-data rep-seqs.qza \
+  --o-visualization rep-seqs.qzv
+
+对比代表性序列，并构建系统发育树
+time qiime phylogeny align-to-tree-mafft-fasttree \
+ --i-sequences rep-seqs.qza \
+ --o-alignment aligned-rep-seqs.qza \
+ --o-masked-alignment masked-aligned-rep-seqs.qza \
+ --o-tree unrooted-tree.qza \
+ --o-rooted-tree rooted-tree.qza
+
+导出无根进化树
+mkdir phyloseq
+
+qiime tools export \
+--input-path unrooted-tree.qza \
+--output-path phyloseq
+cd phyloseq; mv tree.nwk unrooted_tree.nwk; cd ..
+
+导出有根进化树
+qiime tools export \
+--input-path rooted-tree.qza \
+--output-path phyloseq
+cd phyloseq; mv tree.nwk rooted_tree.nwk;cd .. 
+
+导出特征表
+qiime tools export \
+--input-path table.qza \
+--output-path phyloseq
+
+biom convert \
+-i phyloseq/feature-table.biom \
+-o phyloseq/otu_table.tsv \
+--to-tsv
+cd phyloseq; sed -i '1d' otu_table.tsv
+sed -i 's/#OTU ID/ASV/' otu_table.tsv
+cd ../
+
+下载训练好的数据库silva-138-99-nb-classifier，做数据注释
+time qiime feature-classifier classify-sklearn \
+  --i-classifier /home/jiayingzheng/16s_test/silva-138-99-nb-classifier.qza \
+  --i-reads rep-seqs.qza \
+  --o-classification taxonomy_silva_138_99.qza
+
+可视化注释的结果
+time qiime metadata tabulate \
+--m-input-file  taxonomy_silva_138_99.qza \
+--o-visualization taxonomy.qzv
+
+导出注释文件
+qiime tools export \
+--input-path  taxonomy_silva_138_99.qza \
+--output-path phyloseq
+
+qiime taxa barplot \
+  --i-table table.qza \
+  --i-taxonomy taxonomy_silva_138_99.qza \
+  --m-metadata-file sample-metadata.tsv \
+  --o-visualization taxa-bar-plots.qzv
